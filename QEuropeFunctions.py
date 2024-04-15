@@ -5,6 +5,7 @@
 
 #Author : Raja Yehia (raja.yehia@gmail.com)
 #we are gonna win a prize mdrr
+#modification on 15/04 23:49
 
 import netsquid as ns
 import netsquid.components.instructions as instr
