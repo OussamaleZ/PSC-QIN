@@ -4,6 +4,7 @@
 # Netsquid has to be installed and the file lossmodel.py should be in the repository
 
 #Author : Raja Yehia (raja.yehia@gmail.com)
+#we are gonna win a prize mdrr
 
 import netsquid as ns
 
