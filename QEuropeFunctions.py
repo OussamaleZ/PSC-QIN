@@ -7,7 +7,6 @@
 #we are gonna win a prize mdrr
 
 import netsquid as ns
-
 import netsquid.components.instructions as instr
 import netsquid.components.qprogram as qprog
 import random 
