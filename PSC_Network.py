@@ -434,7 +434,7 @@ class ReceiveProtocol(NodeProtocol):
     def __init__(self, othernode, measurement_succ, measurement_flip, BB84, node):
         super().__init__(node = node)
         self._othernode = othernode #L'autre bout de communication de type QNode
-        self._measurement_succ = measurement_succ # probabilté 
+        self._measurement_succ = measurement_succ # probabilité 
         self._BB84 = BB84 # boolean qui indique si on utilise ou pas le protocole BB84
         self._measurement_flip = measurement_flip # probabilité d'un bitflip
     
@@ -494,9 +494,9 @@ class SendBB84(NodeProtocol):
     
     def __init__(self,othernode, init_succ, init_flip,node):
         super().__init__(node=node)
-        self._othernode = othernode
-        self._init_succ = init_succ
-        self._init_flip = init_flip
+        self._othernode = othernode # Destination du qubit
+        self._init_succ = init_succ # Probabilité de succès de création du qubit
+        self._init_flip = init_flip # Probabilité d'un bit flip initial
     
     def run(self):    
 
@@ -505,21 +505,21 @@ class SendBB84(NodeProtocol):
         clock = Clock(name="clock", start_delay=0, 
                       models={"timing_model": FixedDelayModel(delay=QNode_init_time)})
         self.node.add_subcomponent(clock)
-        clock.start()
+        clock.start() # On regarde la montre
         
         while True:
-            mem.reset()
+            mem.reset() # Réinitialisation de la mémoire quantique à chaque étape
 
-            mem.execute_instruction(instr.INSTR_INIT,[0])
+            mem.execute_instruction(instr.INSTR_INIT,[0]) # Création du qubit
             yield self.await_program(mem,await_done=True,await_fail=True)
             #print("qubit created")
-            succ = bernoulli.rvs(self._init_succ)
+            succ = bernoulli.rvs(self._init_succ) 
             if (succ == 1):                    
                 flip = bernoulli.rvs(self._init_flip)
-                if (flip == 1):
-                    mem.execute_instruction(instr.INSTR_X, [0], physical = False)
+                if (flip == 1): # Bitflip eventuel 
+                    mem.execute_instruction(instr.INSTR_X, [0], physical = False) 
             
-                base = bernoulli.rvs(0.5) #random choice of a basis
+                base = bernoulli.rvs(0.5) # Choix aléatoire de la base
                 if base <0.5:
                     mem.execute_instruction(instr.INSTR_H,[0])
                     base = "plusmoins"
@@ -530,7 +530,7 @@ class SendBB84(NodeProtocol):
                 yield self.await_program(mem,await_done=True,await_fail=True)
                 
                 t = clock.num_ticks
-                bit = bernoulli.rvs(0.5) #random choice of a bit
+                bit = bernoulli.rvs(0.5) # Choix aléatoire d'un bit
                 if bit < 0.5:
                     mem.execute_instruction(instr.INSTR_I, [0], physical=False)
                     self.node.key.append(([t,base],0))
@@ -539,10 +539,10 @@ class SendBB84(NodeProtocol):
                         mem.execute_instruction(instr.INSTR_X, [0], physical=False)
                     elif base == "plusmoins":
                         mem.execute_instruction(instr.INSTR_Z, [0], physical=False)
-                    self.node.key.append(([t,base],1))
+                    self.node.key.append(([t,base],1)) # Ajout à la clé de chiffrement 
                 
                 qubit, = mem.pop([0])
-                self.node.ports["cout_{}".format(self._othernode.name)].tx_output(t)
+                self.node.ports["cout_{}".format(self._othernode.name)].tx_output(t) # Envoi du qubit à othernode
 
 
 
