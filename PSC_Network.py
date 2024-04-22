@@ -110,7 +110,7 @@ qlient_physical_instructions = [
 
 
 #Free space parameters
-class Satellite(Node):
+class Satellite_Node(Node):
     """A Qonnector node
     
     Parameters:
@@ -165,7 +165,7 @@ class QNetwork():
         noeud = QNode(name, phys_instruction= qlient_physical_instructions, neighbourList = [], portsDict = {}, portsList =[], key = None)
         self.network.add_node(noeud)
 
-    def Connect_QNode(self, qnode1, qnode2, distance, dist_sat1 = None, dist_sat2 = None, tsat1 = None, tsat2 = None, linktype = "fiber"):
+    def Connect_QNode(self, qnode1, qnode2, distance=0, dist_sat1 = None, dist_sat2 = None, tsat1 = None, tsat2 = None, linktype = "fiber"):
         """Relie QNode1 et QNode2 avec avec une fibre
         ##Parameters##
         qnode1 : (str) nom du premier node 
@@ -181,30 +181,30 @@ class QNetwork():
         network = self.network
         QNode1 = network.get_node(qnode1)
         QNode2 = network.get_node(qnode2)
-
+        #print(distance)
         if linktype == "fiber":
             #QuantumeChannel(name (str),
             #                 delay : fixed transmission to use if delay_model is None en ns
             #                 length : longueur du Channel en Km
             #                  models : dictionnaire des modèles qu'on va utiliser)
            
-            qchannel12 = QuantumChannel("QuantumChannel{}".format(QNode1.name) + "to{}".format(QNode2.name), delay = 1, length = distance,
+            qchannel12 = QuantumChannel("QuantumChannel{}".format(qnode1) + "to{}".format(qnode2), delay = 1, length = distance,
                                         models = {"quantumlossmodel" : FibreLossModel(p_loss_init = 1 - fiber_coupling, p_loss_length = fiber_loss),
                                                 "quantumnoisemodel" : DephaseNoiseModel(dephase_rate = fiber_dephasing_rate, time_independent = True)})
-            qchannel21 = QuantumChannel("QuantumChannel{}".format(QNode2.name) + "to{}".format(QNode1.name), delay = 1, length = distance,
+            qchannel21 = QuantumChannel("QuantumChannel{}".format(qnode2) + "to{}".format(qnode1), delay = 1, length = distance,
                                         models = {"quantumlossmodel" : FibreLossModel(p_loss_init = 1 - fiber_coupling, p_loss_length = fiber_loss),
                                                 "quantumnoisemodel" : DephaseNoiseModel(dephase_rate = fiber_dephasing_rate, time_independent = True)})
-           
+            #print(distance)
             #add_connection ( (Node) premier node à connecter,
             #                 (Node) deuxième node à connecter,
             #                 (Channel) où va être placé la connection du noeud 1 au noeud 2)
             # retourne deux (str) qui sont les noms des deux ports
             QNode1_send, QNode2_receive = network.add_connection(
-            QNode1, QNode2, channel_to = qchannel12, label = "quantum{}".format(QNode1.name) + "to{}".format(QNode2.name)
+            qnode1, qnode2, channel_to = qchannel12, label = "quantum{}".format(qnode1) + "to{}".format(qnode2)
             )
 
             QNode2_send, QNode1_receive = network.add_connection(
-                QNode2, QNode1, channel_to = qchannel21, label = "quantum{}".format(QNode2.name) + "to{}".format(QNode1.name)
+                qnode2, qnode1, channel_to = qchannel21, label = "quantum{}".format(qnode2) + "to{}".format(qnode1)
             )
 
            #QuantumProcessor ((str) name,
@@ -212,15 +212,15 @@ class QNetwork():
            #                   phys_instructions : les physicals instructions qu'on a le droits d'utiliser)
 
 
-            qmem1 = QuantumProcessor("QNodeMemoryTo{}".format(QNode2.name), num_positions=2, phys_instructions = qlient_physical_instructions)
+            qmem1 = QuantumProcessor("QNodeMemoryTo{}".format(qnode2), num_positions=2, phys_instructions = qlient_physical_instructions)
             #subcompenent est un attribut de la class Node qui est une liste de components
             QNode1.add_subcomponent(qmem1)
-            QNode1.neighbourList.append(QNode2)
+            QNode1.neighbourList.append(qnode2)
             QNode1.portsDict[qnode2] = [QNode1_send,QNode1_receive]
 
-            qmem2 = QuantumProcessor("QNodeMemoryTo{}".format(QNode1.name), num_positions=2, phys_instructions = qlient_physical_instructions)
+            qmem2 = QuantumProcessor("QNodeMemoryTo{}".format(qnode1), num_positions=2, phys_instructions = qlient_physical_instructions)
             QNode2.add_subcomponent(qmem2)
-            QNode2.neighbourList.append(QNode1)
+            QNode2.neighbourList.append(qnode1)
             QNode2.portsDict[qnode1] = [QNode2_send,QNode2_receive]
             
             #We start by QNode1
@@ -231,6 +231,7 @@ class QNetwork():
                 if isinstance(target, QuantumMemory):
                     if not target.has_supercomponent(QNode1): #ie on espere que ce soit une qmemoire de QNode1
                         raise ValueError("Can't internally route to a quantummemory that is not a subcomponent.")
+                    print(target.ports["qin"])
                     target.ports['qin'].tx_input(msg)
                 else:
                     QNode1.ports[QNode1_send].tx_output(msg)
@@ -241,7 +242,7 @@ class QNetwork():
         
 
             # Connect the Qlient's ports 
-            #QNode2.ports[QNode2_receive].forward_input(qmem2.ports["qin"]) #port to receive from qonnector
+            QNode2.ports[QNode2_receive].forward_input(qmem2.ports["qin"]) #port to receive from qonnector
             #qmem2.ports["qout"].forward_output(QNode2.ports[QNode2_send]) #port to send to qonnector
             
             #We do the same for QNode2
@@ -257,7 +258,7 @@ class QNetwork():
             # Connect the Qonnector's ports
 
             qmem2.ports['qout'].bind_output_handler(route_qubits2) #port to send to Qlient
-            QNode2.ports[QNode2_receive].forward_input(qmem2.ports["qin"]) #port to receive from Qlient
+            #QNode2.ports[QNode2_receive].forward_input(qmem2.ports["qin"]) #port to receive from Qlient
         
 
             # Connect the Qlient's ports 
@@ -265,18 +266,18 @@ class QNetwork():
             #qmem1.ports["qout"].forward_output(QNode1.ports[QNode1_send]) #port to send to qonnector
 
 
-            cchannel12 = ClassicalChannel("ClassicalChannel{}".format(QNode1.name) + "to{}".format(QNode2.name), delay = 1, length = distance)
-            cchannel21 = ClassicalChannel("ClassicalChannel{}".format(QNode2.name) + "to{}".format(QNode1.name), delay = 1, length = distance)
+            cchannel12 = ClassicalChannel("ClassicalChannel{}".format(qnode1) + "to{}".format(qnode2), delay = 1, length = distance)
+            cchannel21 = ClassicalChannel("ClassicalChannel{}".format(qnode2) + "to{}".format(qnode1), delay = 1, length = distance)
 
-            network.add_connection(QNode1, QNode2, channel_to = cchannel21, label="Classical{}".format(QNode2.name) + "to{}".format(QNode1.name), 
-                                port_name_node1="cout_{}".format(QNode2.name), port_name_node2="cin_{}".format(QNode1.name))
-            network.add_connection(QNode2, QNode1, channel_to=cchannel12, label = "Classical{}".format(QNode1.name) + "to{}".format(QNode2.name),
-                                port_name_node1="cout_{}".format(QNode1.name), port_name_node2="cin_{}".format(QNode2.name))
-            
+            network.add_connection(qnode1, qnode2, channel_to = cchannel21, label="Classical{}".format(QNode2.name) + "to{}".format(QNode1.name), 
+                                port_name_node1="cout_{}".format(qnode2), port_name_node2="cin_{}".format(qnode1))
+            network.add_connection(qnode2, qnode1, channel_to=cchannel12, label = "Classical{}".format(QNode1.name) + "to{}".format(QNode2.name),
+                                port_name_node1="cout_{}".format(qnode1), port_name_node2="cin_{}".format(qnode2))
+            print(QNode1)
         
         elif linktype == "satellite":
             # Création d'un satellite (même propriétés que Qonnector dans QEurope)
-            Satellite = Satellite("Satellite{}".format(QNode1 + QNode2), QlientList=[],QlientPorts={},QlientKeys={})
+            Satellite = Satellite_Node("Satellite{}".format(qnode1 + qnode2), QlientList=[],QlientPorts={},QlientKeys={})
             network.add_node(Satellite) 
 
             # Processeurs quantiques pour chacun des QNode que l'on connecte via ce satellite
@@ -288,7 +289,7 @@ class QNetwork():
                                 phys_instructions=satellites_physical_instructions)
             Satellite.add_subcomponent(qmem4)
             
-            # De même pour les Qnodes
+            # De même pour les Qnodess
             qmem1 = QuantumProcessor("QNodeMemoryTo{}".format(Satellite.name), num_positions=2 ,
                                 phys_instructions=qlient_physical_instructions)
             QNode1.add_subcomponent(qmem1)
@@ -339,7 +340,7 @@ class QNetwork():
                 target = msg.meta.pop('internal', None)
 
                 if isinstance(target, QuantumMemory):
-                    if not target.has_supercomponent(QN1):
+                    if not target.has_supercomponent(QNode1):
                         raise ValueError("Can't internally route to a quantummemory that is not a subcomponent.")
                     target.ports['qin'].tx_input(msg)
                 else:
@@ -353,7 +354,7 @@ class QNetwork():
             cchannel2 = ClassicalChannel("ClassicalChanneltoSatellite",length=dist_sat1, delay=1)
         
             network.add_connection(Satellite, QNode1, channel_to=cchannel1, 
-                               label="Classicalto{}".format(QNode1), port_name_node1="cout_{}".format(QNode1),
+                               label="Classicalto{}".format(QNode1), port_name_node1="cout_{}".format(qnode1),
                                port_name_node2="cin_{}".format(Satellite.name))
             network.add_connection(QNode1, Satellite, channel_to=cchannel2, 
                                label="ClassicaltoSat".format(QNode1), port_name_node1="cout_{}".format(Satellite.name),
@@ -398,7 +399,7 @@ class QNetwork():
                 target = msg.meta.pop('internal', None)
 
                 if isinstance(target, QuantumMemory):
-                    if not target.has_supercomponent(QN2):
+                    if not target.has_supercomponent(QNode2):
                         raise ValueError("Can't internally route to a quantummemory that is not a subcomponent.")
                     target.ports['qin'].tx_input(msg)
                 else:
@@ -412,10 +413,10 @@ class QNetwork():
             cchannel3 = ClassicalChannel("ClassicalChannelto{}".format(QNode2),length=dist_sat2, delay=1)
             cchannel4 = ClassicalChannel("ClassicalChanneltoSatellite",length=dist_sat2, delay=1)
         
-            network.add_connection(Satellite, QN2, channel_to=cchannel3, 
-                               label="Classicalto{}".format(QNode1), port_name_node1="cout_{}".format(QNode2),
+            network.add_connection(Satellite, QNode2, channel_to=cchannel3, 
+                               label="Classicalto{}".format(QNode1), port_name_node1="cout_{}".format(qnode2),
                                port_name_node2="cin_{}".format(Satellite.name))
-            network.add_connection(QN2, Satellite, channel_to=cchannel4, 
+            network.add_connection(QNode2, Satellite, channel_to=cchannel4, 
                                label="ClassicaltoSat".format(QNode2), port_name_node1="cout_{}".format(Satellite.name),
                                port_name_node2="cin_{}".format(QNode2))
             
@@ -437,11 +438,15 @@ class ReceiveProtocol(NodeProtocol):
     
     def run(self):
         mem = self.node.subcomponents["QNodeMemoryTo{}".format(self._othernode.name)]
-        print(mem)
+        #print("mem : ")
+        #print(mem)
         port = self.node.ports[self.node.portsDict[self._othernode.name][1]]
+        #print(port.name)
+        #print("3")
         while True :
             yield self.await_port_input(port)
-            t = self.node.ports["cin_{}".format(self._othernode.name)].rx_input()       
+            t = self.node.ports["cin_{}".format(self._othernode.name)].rx_input()  
+            #print (t)     
             b = bernoulli.rvs(self._measurement_succ)
             if b ==1 :
                 if self._BB84: #in case we perform BB84
@@ -454,8 +459,9 @@ class ReceiveProtocol(NodeProtocol):
                         base = "zeroun"
                 else:
                     base = None 
+                print(not(mem.busy))
+                if (not(mem.busy)) :
                 #print(not(mem.busy))          
-                if not(mem.busy):  
                     #on execute la première instruction et on stocke le résultat dans m["M1"][0]
                     m,_,_ = mem.execute_instruction(instr.INSTR_MEASURE,[0],output_key="M1") 
                     yield self.await_program(mem,await_done=True,await_fail=True) # Hamza : J'ai pas bien compris
@@ -465,13 +471,12 @@ class ReceiveProtocol(NodeProtocol):
                             m['M1'][0] =1
                         elif m['M1'][0]==1:
                             m['M1'][0]=0
-                    #Hamza : on est toujours dans ce cas car on utilise toujours BB84                
                     if m['M1'] is not None and t is not None and base is not None:
                         self.node.key.append(([t.items[0], base],m['M1'][0]))
-                            
+                                
                     elif m['M1'] is not None and t is not None:
                         self.node.key.append((t.items,m['M1'][0]))
-                        
+                            
                     elif m['M1'] is not None:
                         self.node.key.append(m['M1'][0])
                             
