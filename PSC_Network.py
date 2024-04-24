@@ -1,21 +1,33 @@
-import netsquid as ns 
-from netsquid.nodes import Node
-from netsquid.nodes.network import Network
-from netsquid.components import QuantumChannel, QuantumMemory, ClassicalChannel
-from netsquid.components.models.qerrormodels import FibreLossModel, DephaseNoiseModel
-from netsquid.components.qprocessor import QuantumProcessor
-from netsquid.protocols import NodeProtocol
-from netsquid.components.qprocessor import PhysicalInstruction
-from netsquid.components.clock import Clock
-from netsquid.components.models.delaymodels import FixedDelayModel, FibreDelayModel
-
+import netsquid as ns
 
 import netsquid.components.instructions as instr
-
-import random
-import numpy as np
-import math 
+import netsquid.components.qprogram as qprog
+import random 
 from scipy.stats import bernoulli
+import logging
+import math
+import numpy as np
+
+from netsquid.components import Channel, QuantumChannel, QuantumMemory, ClassicalChannel
+from netsquid.components.models.qerrormodels import FibreLossModel, DepolarNoiseModel, DephaseNoiseModel
+from netsquid.nodes import Node, DirectConnection
+from netsquid.nodes.connections import Connection
+from netsquid.protocols import NodeProtocol
+from netsquid.components.models import DelayModel
+from netsquid.components.models.delaymodels import FixedDelayModel, FibreDelayModel
+from netsquid.components import QuantumMemory
+from netsquid.qubits.state_sampler import StateSampler
+from netsquid.components.qsource import QSource, SourceStatus
+from netsquid.components.qprocessor import QuantumProcessor
+from netsquid.nodes.network import Network
+from netsquid.qubits import ketstates as ks
+from netsquid.protocols.protocol import Signals
+from netsquid.components.qprocessor import PhysicalInstruction
+from netsquid.qubits import qubitapi as qapi
+from netsquid.components.clock import Clock
+from netsquid.qubits.dmtools import DenseDMRepr
+
+import sys
 from lossmodel import FreeSpaceLossModel, FixedSatelliteLossModel
 
 
@@ -60,6 +72,15 @@ GHZ4_time = math.ceil(1e9/f_GHZ) #time to create a GHZ4 state (ns)
 GHZ4_succ = 3.6e-3 #probability that creating a GHZ4 state succeeds
 GHZ5_time = math.ceil(1e9/f_GHZ) #time to create a GHZ5 state (ns)
 GHZ5_succ = 9e-5 #probability that creating a GHZ5 state succeeds
+
+
+#Dark Counts parameter
+DCRateBest = 100
+DCRateWorst = 1000
+DetectGateBest = 1e-10
+DetectGateWorst = 5e-10
+pdarkbest = DCRateBest*DetectGateBest
+pdarkworst = DCRateWorst*DetectGateWorst
 
 
 # Satellite to Ground channel parameters
@@ -134,14 +155,16 @@ class QNode(Node) :
     phys_instruction: list of physical instructions for the Qlient
     portsDict : dictionnaire sous le forme {voisin : [port_tosend,port_toreceive]}
     portList : liste constitué de deux ports un pour envoyé et un pour recevoir
-    key : clé pour BB84 """
+    keyout : dictionnaire des clés envoyées sous la fomeme {voisin : [clé envoyée à ce voisin]}
+    keyin : dictionnaire des clés reçues sous la forme {voisin : [clé reçue par ce voisin]} """
     #Ici il faut essayer de bien comprende ce que veulent dire les ports ça peut aider à débugger
-    def __init__(self, name, phys_instruction, neighbourList = None, portsDict = None, portsList = None, key = None):
+    def __init__(self, name, phys_instruction, neighbourList = None, portsDict = None, portsList = None, keyin = None,keyout = None):
         super().__init__(name = name)
         self.neighbourList = neighbourList 
         self.portsDict = portsDict  #
         self.portsList = portsList 
-        self.key = key 
+        self.keyout = keyout
+        self.keyin = keyin
         
         #On rajoute une mémoire quantique, le premier paramètre réfère au nim (str) de la mémoire quantique,
         # le deuxième est le nombre de memoire quantique disponible (ici on a besoin d'une mémoire quantique pour chaque lien et donc on a besoin de deux mémoires quantiques)
@@ -162,10 +185,10 @@ class QNetwork():
 
     def Add_QNode(self, name):
         """Méthode afin d'ajouter un noeud au réseau"""
-        noeud = QNode(name, phys_instruction= qlient_physical_instructions, neighbourList = [], portsDict = {}, portsList =[], key = None)
+        noeud = QNode(name, phys_instruction= qlient_physical_instructions, neighbourList = [], portsDict = {}, portsList =[], keyin = {},keyout={} )
         self.network.add_node(noeud)
 
-    def Connect_QNode(self, qnode1, qnode2, distance=0, dist_sat1 = None, dist_sat2 = None, tsat1 = None, tsat2 = None, linktype = "fiber"):
+    def Connect_QNode(self, qnode1, qnode2, distance=0,  tsat = None,  linktype = "fiber"):
         """Relie QNode1 et QNode2 avec avec une fibre
         ##Parameters##
         qnode1 : (str) nom du premier node 
@@ -187,13 +210,18 @@ class QNetwork():
             #                 delay : fixed transmission to use if delay_model is None en ns
             #                 length : longueur du Channel en Km
             #                  models : dictionnaire des modèles qu'on va utiliser)
+            fiber_speed = 200000  # speed of light in fiber in km/s
+            delay = distance / fiber_speed  # delay in seconds
+            delay_ns = delay * 1e9  # convert delay to nanoseconds
+
+            # "delay_model" : FibreDelayModel()
            
-            qchannel12 = QuantumChannel("QuantumChannel{}".format(qnode1) + "to{}".format(qnode2), delay = 1, length = distance,
-                                        models = {"quantumlossmodel" : FibreLossModel(p_loss_init = 1 - fiber_coupling, p_loss_length = fiber_loss),
-                                                "quantumnoisemodel" : DephaseNoiseModel(dephase_rate = fiber_dephasing_rate, time_independent = True)})
-            qchannel21 = QuantumChannel("QuantumChannel{}".format(qnode2) + "to{}".format(qnode1), delay = 1, length = distance,
-                                        models = {"quantumlossmodel" : FibreLossModel(p_loss_init = 1 - fiber_coupling, p_loss_length = fiber_loss),
-                                                "quantumnoisemodel" : DephaseNoiseModel(dephase_rate = fiber_dephasing_rate, time_independent = True)})
+            qchannel12 = QuantumChannel("QuantumChannel{}".format(qnode1) + "to{}".format(qnode2),  length = distance,delay=1,
+                                        models = {"quantum_loss_model" : FibreLossModel(p_loss_init = 1 - fiber_coupling, p_loss_length = fiber_loss),
+                                                "quantum_noise_model" : DephaseNoiseModel(dephase_rate = fiber_dephasing_rate, time_independent = True)})
+            qchannel21 = QuantumChannel("QuantumChannel{}".format(qnode2) + "to{}".format(qnode1),  length = distance, delay = 1,
+                                        models = {"quantum_loss_model" : FibreLossModel(p_loss_init = 1 - fiber_coupling, p_loss_length = fiber_loss),
+                                                "quantum_noise_model" : DephaseNoiseModel(dephase_rate = fiber_dephasing_rate, time_independent = True)})
             #print(distance)
             #add_connection ( (Node) premier node à connecter,
             #                 (Node) deuxième node à connecter,
@@ -217,12 +245,18 @@ class QNetwork():
             QNode1.add_subcomponent(qmem1)
             QNode1.neighbourList.append(qnode2)
             QNode1.portsDict[qnode2] = [QNode1_send,QNode1_receive]
+            QNode1.keyin[qnode2]=[]
+            QNode1.keyout[qnode2]=[]
+
 
             qmem2 = QuantumProcessor("QNodeMemoryTo{}".format(qnode1), num_positions=2, phys_instructions = qlient_physical_instructions)
             QNode2.add_subcomponent(qmem2)
             QNode2.neighbourList.append(qnode1)
             QNode2.portsDict[qnode1] = [QNode2_send,QNode2_receive]
-            
+            QNode2.keyout[qnode1]=[]
+            QNode2.keyin[qnode1]=[]
+
+
             #We start by QNode1
             #C'est un message qui va être envoyé ; je pense qu'il faut mieux expliquer
             def route_qubits1(msg):
@@ -231,7 +265,7 @@ class QNetwork():
                 if isinstance(target, QuantumMemory):
                     if not target.has_supercomponent(QNode1): #ie on espere que ce soit une qmemoire de QNode1
                         raise ValueError("Can't internally route to a quantummemory that is not a subcomponent.")
-                    print(target.ports["qin"])
+                    #print(target.ports["qin"])
                     target.ports['qin'].tx_input(msg)
                 else:
                     QNode1.ports[QNode1_send].tx_output(msg)
@@ -266,160 +300,120 @@ class QNetwork():
             #qmem1.ports["qout"].forward_output(QNode1.ports[QNode1_send]) #port to send to qonnector
 
 
-            cchannel12 = ClassicalChannel("ClassicalChannel{}".format(qnode1) + "to{}".format(qnode2), delay = 1, length = distance)
-            cchannel21 = ClassicalChannel("ClassicalChannel{}".format(qnode2) + "to{}".format(qnode1), delay = 1, length = distance)
+            cchannel12 = ClassicalChannel("ClassicalChannel{}".format(qnode1) + "to{}".format(qnode2),  length = distance,delay=1)
+            cchannel21 = ClassicalChannel("ClassicalChannel{}".format(qnode2) + "to{}".format(qnode1),  length = distance,delay=1)
 
             network.add_connection(qnode1, qnode2, channel_to = cchannel21, label="Classical{}".format(QNode2.name) + "to{}".format(QNode1.name), 
                                 port_name_node1="cout_{}".format(qnode2), port_name_node2="cin_{}".format(qnode1))
             network.add_connection(qnode2, qnode1, channel_to=cchannel12, label = "Classical{}".format(QNode1.name) + "to{}".format(QNode2.name),
                                 port_name_node1="cout_{}".format(qnode1), port_name_node2="cin_{}".format(qnode2))
-            print(QNode1)
+            #print(QNode1)
         
         elif linktype == "satellite":
-            # Création d'un satellite (même propriétés que Qonnector dans QEurope)
-            Satellite = Satellite_Node("Satellite{}".format(qnode1 + qnode2), QlientList=[],QlientPorts={},QlientKeys={})
-            network.add_node(Satellite) 
+            #QuantumeChannel(name (str),
+            #                 delay : fixed transmission to use if delay_model is None en ns
+            #                 length : longueur du Channel en Km
+            #                  models : dictionnaire des modèles qu'on va utiliser)
+            fiber_speed = 200000  # speed of light in fiber in km/s
+            delay = distance / fiber_speed  # delay in seconds
+            delay_ns = delay * 1e9  # convert delay to nanoseconds
 
-            # Processeurs quantiques pour chacun des QNode que l'on connecte via ce satellite
-            qmem3 = QuantumProcessor("SatelliteMemoryTo{}".format(QNode1), num_positions=2,
-                                phys_instructions=satellites_physical_instructions)
-            Satellite.add_subcomponent(qmem3)
+            # "delay_model" : FibreDelayModel()
+           
+            qchannel12 = QuantumChannel("QuantumChannel{}".format(qnode1) + "to{}".format(qnode2),  length = distance,delay=1,
+                                        models = {"quantum_loss_model" : FixedSatelliteLossModel(txDiv, sigmaPoint,
+                                                                            rx_aperture_sat, Cn2_sat, wavelength,tsat),
+                                                "quantum_noise_model" : DephaseNoiseModel(dephase_rate = fiber_dephasing_rate, time_independent = True)})
+            qchannel21 = QuantumChannel("QuantumChannel{}".format(qnode2) + "to{}".format(qnode1),  length = distance, delay = 1,
+                                        models = {"quantum_loss_model" :  FixedSatelliteLossModel(txDiv, sigmaPoint,
+                                                                            rx_aperture_sat, Cn2_sat, wavelength,tsat),
+                                                "quantum_noise_model" : DephaseNoiseModel(dephase_rate = fiber_dephasing_rate, time_independent = True)})
+            #print(distance)
+            #add_connection ( (Node) premier node à connecter,
+            #                 (Node) deuxième node à connecter,
+            #                 (Channel) où va être placé la connection du noeud 1 au noeud 2)
+            # retourne deux (str) qui sont les noms des deux ports
+            QNode1_send, QNode2_receive = network.add_connection(
+            qnode1, qnode2, channel_to = qchannel12, label = "quantum{}".format(qnode1) + "to{}".format(qnode2)
+            )
 
-            qmem4 = QuantumProcessor("SatelliteMemoryTo{}".format(QNode2), num_positions=2,
-                                phys_instructions=satellites_physical_instructions)
-            Satellite.add_subcomponent(qmem4)
-            
-            # De même pour les Qnodess
-            qmem1 = QuantumProcessor("QNodeMemoryTo{}".format(Satellite.name), num_positions=2 ,
-                                phys_instructions=qlient_physical_instructions)
+            QNode2_send, QNode1_receive = network.add_connection(
+                qnode2, qnode1, channel_to = qchannel21, label = "quantum{}".format(qnode2) + "to{}".format(qnode1)
+            )
+
+           #QuantumProcessor ((str) name,
+           #                   num position : numéro de quantum memory availabl (ici pn choisit 2 donc une pour envoyer et une pour recevoir)
+           #                   phys_instructions : les physicals instructions qu'on a le droits d'utiliser)
+
+
+            qmem1 = QuantumProcessor("QNodeMemoryTo{}".format(qnode2), num_positions=2, phys_instructions = qlient_physical_instructions)
+            #subcompenent est un attribut de la class Node qui est une liste de components
             QNode1.add_subcomponent(qmem1)
+            QNode1.neighbourList.append(qnode2)
+            QNode1.portsDict[qnode2] = [QNode1_send,QNode1_receive]
+            QNode1.keyin[qnode2]=[]
+            QNode1.keyout[qnode2]=[]
 
-            qmem2 = QuantumProcessor("QNodeMemoryTo{}".format(Satellite.name), num_positions=2 ,
-                                phys_instructions=qlient_physical_instructions)
+
+            qmem2 = QuantumProcessor("QNodeMemoryTo{}".format(qnode1), num_positions=2, phys_instructions = qlient_physical_instructions)
             QNode2.add_subcomponent(qmem2)
-            
-            
-            # Connection du satellite avec QNode1
-            qchannel1 = QuantumChannel("SatChannelto{}".format(QNode1),length=dist_sat1, delay=1,
-                                   models={"quantum_loss_model": FixedSatelliteLossModel(txDiv, sigmaPoint,
-                                                                            rx_aperture_sat, Cn2_sat, wavelength,tsat1)})
-            qchannel3 = QuantumChannel("SatChannelto{}".format(Satellite),length=dist_sat1, delay=1,
-                                   models={"quantum_loss_model": FixedSatelliteLossModel(txDiv, sigmaPoint,
-                                                                            rx_aperture_sat, Cn2_sat, wavelength,tsat1)})
-            # Connection channels-nodes
-            Sat1_send, QNode1_receive = network.add_connection(
-                    Satellite, QNode1, channel_to=qchannel1, label="SatelliteChanTo{}".format(QNode1))
-            QNode1_send, Sat1_rec = network.add_connection(
-                    QNode1, Satellite, channel_to=qchannel3, label="SatelliteChanTo{}".format(Satellite))
+            QNode2.neighbourList.append(qnode1)
+            QNode2.portsDict[qnode1] = [QNode2_send,QNode2_receive]
+            QNode2.keyout[qnode1]=[]
+            QNode2.keyin[qnode1]=[]
 
-        
-            # Changement des propriétés du satellite
-            Satellite.QlientList.append(QNode1)
-            Satellite.QlientPorts[QNode1] = [Sat1_send]
-            Satellite.QlientKeys[QNode1] = []
 
-            # Et de celles du QNode1
-            QNode1.neighbourList.append(Satellite)
-            QNode1.portsDict[Satellite.name] = [QNode1_send,QNode1_receive]
-    
-            # Connection des ports
-            def route_qubits3(msg):
+            #We start by QNode1
+            #C'est un message qui va être envoyé ; je pense qu'il faut mieux expliquer
+            def route_qubits1(msg):
+                #target ici est une qmem
                 target = msg.meta.pop('internal', None)
-
                 if isinstance(target, QuantumMemory):
-                    if not target.has_supercomponent(Satellite):
+                    if not target.has_supercomponent(QNode1): #ie on espere que ce soit une qmemoire de QNode1
                         raise ValueError("Can't internally route to a quantummemory that is not a subcomponent.")
-                    target.ports['qin'].tx_input(msg)
-                else:
-                    Satellite.ports[Sat1_send].tx_output(msg)
-            
-        
-            qmem3.ports['qout'].bind_output_handler(route_qubits3) 
-            
-            def route_qubits5(msg):
-                target = msg.meta.pop('internal', None)
-
-                if isinstance(target, QuantumMemory):
-                    if not target.has_supercomponent(QNode1):
-                        raise ValueError("Can't internally route to a quantummemory that is not a subcomponent.")
+                    #print(target.ports["qin"])
                     target.ports['qin'].tx_input(msg)
                 else:
                     QNode1.ports[QNode1_send].tx_output(msg)
-                    
-            qmem1.ports['qout'].bind_output_handler(route_qubits5) 
-            QNode1.ports[QNode1_receive].forward_input(qmem1.ports["qin"]) 
-        
-            # Channel classique en plus
-            cchannel1 = ClassicalChannel("ClassicalChannelto{}".format(QNode1),length=dist_sat1, delay=1)
-            cchannel2 = ClassicalChannel("ClassicalChanneltoSatellite",length=dist_sat1, delay=1)
-        
-            network.add_connection(Satellite, QNode1, channel_to=cchannel1, 
-                               label="Classicalto{}".format(QNode1), port_name_node1="cout_{}".format(qnode1),
-                               port_name_node2="cin_{}".format(Satellite.name))
-            network.add_connection(QNode1, Satellite, channel_to=cchannel2, 
-                               label="ClassicaltoSat".format(QNode1), port_name_node1="cout_{}".format(Satellite.name),
-                               port_name_node2="cin_{}".format(QNode1))
-            
-            # On fait la même chose avec QNode2
-            qchannel2 = QuantumChannel("SatChannelto{}".format(QNode2),length=dist_sat2, delay=1,
-                                   models={"quantum_loss_model": FixedSatelliteLossModel(txDiv, sigmaPoint,
-                                                                            rx_aperture_sat, Cn2_sat, wavelength,tsat2)})
-            qchannel4 = QuantumChannel("SatChannelto{}".format(Satellite),length=dist_sat2, delay=1,
-                                   models={"quantum_loss_model": FixedSatelliteLossModel(txDiv, sigmaPoint,
-                                                                            rx_aperture_sat, Cn2_sat, wavelength,tsat2)})        
-            #connect the channels to nodes
-            Sat2_send, QNode2_receive = network.add_connection(
-                    Satellite, QNode2, channel_to=qchannel2, label="SatelliteChanTo{}".format(QNode2))
-            QNode2_send, Sat2_receive = network.add_connection(
-                    QNode2, Satellite, channel_to=qchannel4, label="SatelliteChanTo{}".format(Satellite))
 
-            Satellite.QlientList.append(QNode2)
-            Satellite.QlientPorts[QNode2] = [Sat2_send]
-            Satellite.QlientKeys[QNode2] = []
+            # Connect the Qonnector's ports
+            qmem1.ports['qout'].bind_output_handler(route_qubits1) #port to send to Qlient
+            QNode1.ports[QNode1_receive].forward_input(qmem1.ports["qin"]) #port to receive from Qlient
         
-            QNode2.neighbourList.append(Satellite)
-            QNode2.portsDict[Satellite.name] = [QNode2_send,QNode2_receive]
-    
-        
-            # Connect the Satellite and Qonnector's ports
-            def route_qubits4(msg):
+
+            # Connect the Qlient's ports 
+            QNode2.ports[QNode2_receive].forward_input(qmem2.ports["qin"]) #port to receive from qonnector
+            #qmem2.ports["qout"].forward_output(QNode2.ports[QNode2_send]) #port to send to qonnector
+            
+            #We do the same for QNode2
+            def route_qubits2(msg):
                 target = msg.meta.pop('internal', None)
-
-                if isinstance(target, QuantumMemory):
-                    if not target.has_supercomponent(Satellite):
-                        raise ValueError("Can't internally route to a quantummemory that is not a subcomponent.")
-                    target.ports['qin'].tx_input(msg)
-                else:
-                    Satellite.ports[Sat2_send].tx_output(msg)
-            
-        
-            qmem4.ports['qout'].bind_output_handler(route_qubits4) 
-            
-            def route_qubits6(msg):
-                target = msg.meta.pop('internal', None)
-
                 if isinstance(target, QuantumMemory):
                     if not target.has_supercomponent(QNode2):
                         raise ValueError("Can't internally route to a quantummemory that is not a subcomponent.")
                     target.ports['qin'].tx_input(msg)
                 else:
                     QNode2.ports[QNode2_send].tx_output(msg)
-                    
-            qmem2.ports['qout'].bind_output_handler(route_qubits6) 
+
+            # Connect the Qonnector's ports
+
+            qmem2.ports['qout'].bind_output_handler(route_qubits2) #port to send to Qlient
+            #QNode2.ports[QNode2_receive].forward_input(qmem2.ports["qin"]) #port to receive from Qlient
         
-             
-            QNode2.ports[QNode2_receive].forward_input(qmem2.ports["qin"]) 
-        
-            cchannel3 = ClassicalChannel("ClassicalChannelto{}".format(QNode2),length=dist_sat2, delay=1)
-            cchannel4 = ClassicalChannel("ClassicalChanneltoSatellite",length=dist_sat2, delay=1)
-        
-            network.add_connection(Satellite, QNode2, channel_to=cchannel3, 
-                               label="Classicalto{}".format(QNode1), port_name_node1="cout_{}".format(qnode2),
-                               port_name_node2="cin_{}".format(Satellite.name))
-            network.add_connection(QNode2, Satellite, channel_to=cchannel4, 
-                               label="ClassicaltoSat".format(QNode2), port_name_node1="cout_{}".format(Satellite.name),
-                               port_name_node2="cin_{}".format(QNode2))
-            
+
+            # Connect the Qlient's ports 
+            #QNode1.ports[QNode1_receive].forward_input(qmem1.ports["qin"]) #port to receive from qonnector
+            #qmem1.ports["qout"].forward_output(QNode1.ports[QNode1_send]) #port to send to qonnector
+
+
+            cchannel12 = ClassicalChannel("ClassicalChannel{}".format(qnode1) + "to{}".format(qnode2),  length = distance,delay=1)
+            cchannel21 = ClassicalChannel("ClassicalChannel{}".format(qnode2) + "to{}".format(qnode1),  length = distance,delay=1)
+
+            network.add_connection(qnode1, qnode2, channel_to = cchannel21, label="Classical{}".format(QNode2.name) + "to{}".format(QNode1.name), 
+                                port_name_node1="cout_{}".format(qnode2), port_name_node2="cin_{}".format(qnode1))
+            network.add_connection(qnode2, qnode1, channel_to=cchannel12, label = "Classical{}".format(QNode1.name) + "to{}".format(QNode2.name),
+                                port_name_node1="cout_{}".format(qnode1), port_name_node2="cin_{}".format(qnode2))
+            #print(QNode1)
 
         else:
             raise ValueError("Mauvais type de lien")
@@ -439,13 +433,14 @@ class ReceiveProtocol(NodeProtocol):
     def run(self):
         mem = self.node.subcomponents["QNodeMemoryTo{}".format(self._othernode.name)]
         #print("mem : ")
-        #print(mem)
+        print(mem)
         port = self.node.ports[self.node.portsDict[self._othernode.name][1]]
         #print(port.name)
         #print("3")
         while True :
             yield self.await_port_input(port)
             t = self.node.ports["cin_{}".format(self._othernode.name)].rx_input()  
+            #print(self.node.ports["cin_{}".format(self._othernode.name)])
             #print (t)     
             b = bernoulli.rvs(self._measurement_succ)
             if b ==1 :
@@ -459,9 +454,8 @@ class ReceiveProtocol(NodeProtocol):
                         base = "zeroun"
                 else:
                     base = None 
-                print(not(mem.busy))
+                #print(not(mem.busy))
                 if (not(mem.busy)) :
-                #print(not(mem.busy))          
                     #on execute la première instruction et on stocke le résultat dans m["M1"][0]
                     m,_,_ = mem.execute_instruction(instr.INSTR_MEASURE,[0],output_key="M1") 
                     yield self.await_program(mem,await_done=True,await_fail=True) # Hamza : J'ai pas bien compris
@@ -472,13 +466,13 @@ class ReceiveProtocol(NodeProtocol):
                         elif m['M1'][0]==1:
                             m['M1'][0]=0
                     if m['M1'] is not None and t is not None and base is not None:
-                        self.node.key.append(([t.items[0], base],m['M1'][0]))
+                        self.node.keyin[self._othernode.name].append(([t.items[0], base],m['M1'][0]))
                                 
                     elif m['M1'] is not None and t is not None:
-                        self.node.key.append((t.items,m['M1'][0]))
+                        self.node.keyin[self._othernode.name].append((t.items,m['M1'][0]))
                             
                     elif m['M1'] is not None:
-                        self.node.key.append(m['M1'][0])
+                        self.node.keyin[self._othernode.name].append(m['M1'][0])
                             
             mem.reset()
 
@@ -535,13 +529,13 @@ class SendBB84(NodeProtocol):
                 bit = bernoulli.rvs(0.5) # Choix aléatoire d'un bit
                 if bit < 0.5:
                     mem.execute_instruction(instr.INSTR_I, [0], physical=False)
-                    self.node.key.append(([t,base],0))
+                    self.node.keyout[self._othernode.name].append(([t,base],0))
                 else:
                     if base == "zeroun":
                         mem.execute_instruction(instr.INSTR_X, [0], physical=False)
                     elif base == "plusmoins":
                         mem.execute_instruction(instr.INSTR_Z, [0], physical=False)
-                    self.node.key.append(([t,base],1)) # Ajout à la clé de chiffrement 
+                    self.node.keyout[self._othernode.name].append(([t,base],1)) # Ajout à la clé de chiffrement 
                 
                 qubit, = mem.pop([0])
                 self.node.ports["cout_{}".format(self._othernode.name)].tx_output(t) # Envoi du qubit à othernode
@@ -565,3 +559,105 @@ def Sifting(Lalice, Lbob):
                 Lres.append((ma,mb))
         
     return Lres
+
+
+def Intermédiaire(Lalice, Lbob):
+    """Un permet l'obstention d'un clé intermédiaire qui sera utilisée plus tard pour communiquer avec Lbob
+     
+     Parameters:
+     Lalice, Lbob: lists of outcomes """
+    Lres = []
+    for i in range(len(Lalice)):
+        ta, ma = Lalice[i]
+        for j in range(len(Lbob)):
+            tb, mb = Lbob[j]
+            if ta == tb:
+                Lres.append((ma,mb))
+        
+    return Lres
+
+class  TransmitProtocol(NodeProtocol):
+    """Protocol performed by a Qonnector to transmit a qubit sent by a Qlient or a satellite to another Qlient
+        
+        Parameters
+         Qlient_from: node from which a qubit is expected
+         Qlient_to: node to which transmit the qubit received
+         switch_succ: probability that the transmission succeeds"""
+        
+    def __init__(self, QNode_from, QNode_to, switch_succ, node=None, name=None):
+                super().__init__(node=node, name=name)
+                self._QNode_from = QNode_from
+                self._QNode_to = QNode_to
+                self._switch_succ=switch_succ
+        
+    def run(self):
+            rec_mem = self.node.subcomponents["QNodeMemoryTo{}".format(self._QNode_from.name)]
+            rec_port = self.node.ports[self.node.portsDict[self._QNode_from.name][1]]
+            sen_mem = self.node.subcomponents["QNodeMemoryTo{}".format(self._QNode_to.name)]
+            #print(sen_mem)
+            while True:
+                rec_mem.reset()
+                sen_mem.reset()
+                
+                yield self.await_port_input(rec_port)
+                #print("qubit received at qonnector" )
+                t = self.node.ports["cin_{}".format(self._QNode_from.name)].rx_input()
+                
+                rec_mem.pop([0], skip_noise=True, meta_data={'internal': sen_mem})
+                #print("qubit moved in qonnector's memory")               
+                
+                b = bernoulli.rvs(self._switch_succ)
+                if b ==1 :
+                    qubit, = sen_mem.pop([0])
+                    self.node.ports["cout_{}".format(self._QNode_to.name)].tx_output(t)
+                    #print("qubit sent to node")
+                    
+#Classical post-processing functions
+def getTime(t):
+    a,b = t
+    return a[0]
+
+
+
+def addDarkCounts(L,pdark, K):
+    """Function to add dark counts to a list of outcomes. With probability pdark it will add an outcome to a 
+     timestep where nothing was measured and with probability pdark/2 it will discard an outcome
+     
+    Parameters:
+        L : List of outcomes
+        pdark: probability of getting a dark count at a particular timestep
+        K : Last timestep"""
+    i = 0
+    listestep = []
+    for j in L:
+        a, b = j
+        listestep.append(a[0])
+    while i< K:
+        if i not in listestep:
+            b = bernoulli.rvs(pdark)
+            if b == 1:
+                randbit = bernoulli.rvs(0.5)
+                base = bernoulli.rvs(0.5)
+                if base < 0.5:
+                    L.append(([i,"plusmoins"],randbit))
+                else:
+                    L.append(([i,"zeroun"],randbit))
+            i=i+1
+        else:
+            i=i+1
+    L.sort(key=getTime)
+    for e in L:
+        if bernoulli.rvs(pdark/2)==1:
+            L.remove(e)
+            
+def estimQBER(L):
+    """Function to estimate the QBER from a list of couple (qubit sent,qubit measured)"""
+    if L != []:
+        Lres = []
+        for i in L:
+            (a,b)=i
+            if a != b:
+                Lres.append(b)
+        return len(Lres)/len(L)
+    else:
+        return 1
