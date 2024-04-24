@@ -9,18 +9,19 @@ import math
 
 
 
-#prépa
-villes =[]
-
+#préparation des données
+villes = []
+edges_with_weights =  #doit etre une liste de triplets (villeA,villeB, log(probabilité))
 
 #Création du graphe
 G=nx.Graph()
 
+
 G.add_nodes_from (["villeA",...])
-G.add_weighted_edges_from (edges_with_weights) #edges_with_weights doit etre une liste de triplets (villeA,villeB,probabilité)
+G.add_weighted_edges_from (edges_with_weights) 
 
+#Given two cities 'A' and 'B'. To find the shortest path : we do this
+shortest_path = nx.shortest_path(G, source='A', target='D') #sous la forme ['A', villes intérmediaires, 'B']
+#The we can make a list where we put all the shortest paths between every two edges.
 
-
-
-
-proba = f()
+# 
