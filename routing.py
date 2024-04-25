@@ -45,7 +45,8 @@ minus_log_probas = [-math.log(x) for x in probas]
 
 distances = [('Paris, France', 'Boulogne-Billancourt, France', 6), ('Paris, France', 'Saint-Denis, France', 9), ('Paris, France', 'Versailles, France', 15), ('Paris, France', 'Palaiseau, France', 17), ('Paris, France', 'Evry-Courcouronnes, France', 27), ('Boulogne-Billancourt, France', 'Saint-Denis, France', 16), ('Boulogne-Billancourt, France', 'Versailles, France', 9), ('Boulogne-Billancourt, France', 'Palaiseau, France', 13), ('Boulogne-Billancourt, France', 'Evry-Courcouronnes, France', 27), ('Saint-Denis, France', 'Boulogne-Billancourt, France', 14), ('Saint-Denis, France', 'Versailles, France', 22), ('Saint-Denis, France', 'Palaiseau, France', 26), ('Saint-Denis, France', 'Evry-Courcouronnes, France', 35), ('Versailles, France', 'Palaiseau, France', 13), ('Versailles, France', 'Evry-Courcouronnes, France', 30),  ('Palaiseau, France', 'Evry-Courcouronnes, France', 17) ]#on ne garde que les villes entre lesquelles il y a une distance inférieure à 10km
 
-distances_used = [t for t in distances if t[2]<18]
+dist_lim = 18
+distances_used = [t for t in distances if t[2]<dist_lim]
 
 print(distances_used)
 edges_with_weights= [] #doit etre une liste de triplets (villeA,villeB, log(probabilité))
@@ -64,20 +65,25 @@ for villeA in villes:
         if villeA != villeB :
             shortest_paths.append(nx.shortest_path(G, source=villeA, target=villeB))
 
-print(shortest_paths)
-
+print("les plus courts chemins en ne conisédernat que des distances inférieures à", dist_lim, "sont" , shortest_paths)
 
 
 # Afficher le graphe avec les flux et les poids des arêtes
 plt.figure(figsize = (12,12))
 pos = nx.spring_layout(G)
-nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=1500, font_size=12, arrows=True)
 
+edge_labels = {(u, v): f"W: {d['weight']}, F: {d['flow']:.2f}" for u, v, d in G.edges(data=True)}
+
+nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=1500, font_size=12, arrows=True)
+nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_color='red')
+
+plt.title('distribution équitable du flux')
 plt.show()
 
 
 
-#plus_courts_che
+
+
 
 # for x in villes :
 #     for y in villes :
