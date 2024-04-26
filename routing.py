@@ -27,14 +27,14 @@ G=nx.Graph()
 edges_with_weights= [] #doit etre une liste de triplets (villeA,villeB, log(probabilité))
 for t in distances_used :
     edges_with_weights.append((t[0],t[1],minus_log_probas[t[2]]))
-    
-for t in distances2:
-    edges_with_weights.append((t[0],t[1],minus_log_probas[t[2]]))
+
+# for t in distances2:
+#     edges_with_weights.append((t[0],t[1],minus_log_probas[t[2]]))
 
 G.add_nodes_from (villes)
-G.add_nodes_from (villes2)
+# G.add_nodes_from (villes2)
 G.add_weighted_edges_from (edges_with_weights) 
-G.add_weighted_edges_from ([('Paris','Lille',0.15)]) #Taux de transimission trouvé à l'aide du graphe. Orbite pour la plus basse pour Starlink. 
+# G.add_weighted_edges_from ([('Paris','Lille',0.15)]) #Taux de transimission trouvé à l'aide du graphe. Orbite pour la plus basse pour Starlink. 
 
 shortest_paths = []
 for villeA in villes:
@@ -42,12 +42,8 @@ for villeA in villes:
         if villeA != villeB :
             shortest_paths.append(nx.shortest_path(G, source=villeA, target=villeB))
 
-print("les plus courts chemins en ne conisédernat que des distances inférieures à", dist_lim, "sont" , shortest_paths)
+# print("les plus courts chemins en ne conisédernat que des distances inférieures à", dist_lim, "sont" , shortest_paths)
 
-# Afficher le graphe avec les flux et les poids des arêtes
-plt.figure(figsize = (12,12))
-
-pos = nx.shell_layout(G)
 
 def find_distance(u,v):
     for tuple in distances_used :
@@ -56,15 +52,32 @@ def find_distance(u,v):
     for tuple in distances2 :
         if tuple[0]==u and tuple[1]==v:
             return tuple[2]
-    return ('lien satellitaire, orbite à 350km')
-        
-edge_labels = {(u, v): find_distance(u,v) for u, v, d in G.edges(data=True)}
+    return ('lien satellitaire, orbite pour 350km')
 
-nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=2000, font_size=12, arrows=True)
-nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_color='red')
+# print("le plus court chemin entre Evry et Villeneuve est", nx.shortest_path(G, source='Evry-Courcouronnes', target="Villeneuve d'Ascq"))
+# print(probas[find_distance('Palaiseau','Evry-Courcouronnes')] * probas[find_distance('Paris','Palaiseau')] * probas[ find_distance ("Lille","Villeneuve d'Ascq")] * 0.15)
+
+# Afficher le graphe avec les flux et les poids des arêtes
+plt.figure(figsize = (12,12))
+
+pos = nx.shell_layout(G)
+
+def label(u,v):
+    if u=='Paris' and v=='Lille':
+        return 'Lien satellitaire, orbite à 350km, t : 0,15'
+    if v=='Paris' and u=='Lille':
+        return 'Lien satellitaire, orbite à 350km, t : 0,15'
+    return "d:" + str(find_distance(u,v)) + "km; t:" + str(int(100* probas[find_distance(u,v)])/100)
+                                                                             
+                                    
+edge_labels = {(u, v): label(u,v) for u, v, d in G.edges(data=True)}
+
+nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=3000, font_size=20, arrows=True)
+nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size = 12, font_color='red')
 
 plt.title('Routage résultant : on n\'utilise que les distances inférieures à 18km')
-plt.show()
+plt.savefig('ile de france', dpi=600)
+
 
 
 
