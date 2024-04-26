@@ -72,9 +72,14 @@ print("les plus courts chemins en ne conisédernat que des distances inférieure
 plt.figure(figsize = (12,12))
 pos = nx.spring_layout(G)
 
-edge_labels = {(u, v): f"W: {d['weight']}, F: {d['flow']:.2f}" for u, v, d in G.edges(data=True)}
+def find_distance(u,v):
+    for tuple in distances_used :
+        if tuple[0]==u and tuple[1]==v:
+            return tuple[2]
+        
+edge_labels = {(u, v): find_distance(u,v) for u, v, d in G.edges(data=True)}
 
-nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=1500, font_size=12, arrows=True)
+nx.draw(G, pos, with_labels=True, node_color='skyblue', node_size=2000, font_size=12, arrows=True)
 nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_color='red')
 
 plt.title('distribution équitable du flux')
